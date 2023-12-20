@@ -1,10 +1,10 @@
 '''
 classes and helper methods for the Gift Economies of Scale project
+author: raluca diugan
 '''
 
 import random 
 from collections import defaultdict
-from sklearn import preprocessing
 
 REQUEST_SUBMITTED = "submitted"
 DONATION_SUBMITTED = "submitted"
@@ -13,10 +13,10 @@ AGENT_TYPES = ["decentralization-conscious", "honest", "rational"]
 
 class Agent:
     '''
-    any system user; holds an inventory
+    any system user; holds an inventory of resources
     submits requests, donation responses, donation receipts
-    inventory updated with consumption, acquisition, donations/receipts of resources
-    atype represents the type of agent (honest, rational, decentralization-conscious)
+    inventory: updated with consumption, acquisition, donations/receipts of resources
+    atype: represents the type of agent (honest, rational, decentralization-conscious)
     '''
     
     def __init__(self, id, economies, atype, receipts):
@@ -55,9 +55,10 @@ class Inventory:
 
     def update_inventory_policy(self, resource_id, new_idle_stock):
         '''
-        updates the inventory policy (i.e., how much of the current quantity is idle)
+        updates the inventory policy for a given resource ID (i.e., sets the new idle stock)
         '''
         self.stock[resource_id]["idle_stock"] = new_idle_stock
+        self.stock[resource_id]["quantity"] -= new_idle_stock
 
     def update_quantity(self, resource_id, new_quantity):
         ''' 
@@ -76,7 +77,7 @@ class DonationReceipt:
     donation receipts are submitted by either a requestor or a donor upon a resource's donation
     rtype specifies the type of sender (requestor/donor) of the receipt
     '''
-    def __init__(self, id, agent_id, request_id, rtype, solver_id, quantity, resource_id):
+    def __init__(self, id, agent_id, request_id, rtype, solver_id, quantity, resource_id, donation_id):
         self.id = id
         self.rtype = rtype
         self.agent_id = agent_id
@@ -84,19 +85,22 @@ class DonationReceipt:
         self.solver_id = solver_id
         self.request_id = request_id
         self.resource_id = resource_id 
+        self.donation_id = donation_id
 
 class DonationResponse:
     '''
     donation responses are donation intents/announcements
     agents with spare resources compile responses to requests
     '''
-    def __init__(self, id, donor, request_id, quantity, constraints):
+    def __init__(self, id, donor, request_id, quantity, constraints, economy_id_from, economy_id_to):
         self.id = id
         self.donor = donor
         self.quantity = quantity
         self.request_id = request_id
         self.constraints = constraints
         self.state = DONATION_SUBMITTED
+        self.economy_id_to = economy_id_to
+        self.economy_id_from = economy_id_from
 
 class Request:
     '''
@@ -104,23 +108,25 @@ class Request:
     agents submit requests by specifying the requested resource, quantity, and any applicable constraints
     complex requests (for resources with dependencies) are further divided into corresponding subrequests by solvers
     if a request is fulfilled, its state is FULFILLED
-    if a request expires, its state is EXPIRED and is no longer viable for donations
+    if a request expires, its state is EXPIRED and is no longer considered for donations
     '''
-    def __init__(self, id, resource_id, quantity, requestor, constraints, rtype, solver_id):
+    def __init__(self, id, resource_id, quantity, requestor, constraints, rtype, solver_id, deadline, economy_id):
         self.id = id
         self.rtype = rtype # inherits the type of resource (complex (with dependent resources) or atomic)
         self.subrequests = []
+        self.deadline = deadline # in terms of state count
         self.quantity = quantity
         self.requestor = requestor
         self.solver_id = solver_id
         self.strategy_added = False
+        self.economy_id = economy_id
         self.constraints = constraints
         self.resource_id = resource_id
         self.state = REQUEST_SUBMITTED
-
+        
 class Resource:
     '''
-    resources; rtype is 'complex' for resources with dependent resources, atomic otherwise
+    rtype is 'complex' for resources with dependent resources, atomic otherwise
     '''
     def __init__(self, id, rtype):
         self.id = id
@@ -133,10 +139,8 @@ class Solver:
         - breaking down complex requests into atomic ones
         - request-donation matching
         - donation receipt validation
-    solvers are assigned to one or more subeconomies and handle requests pertaining to that subeconomy 
-    (and the donations corresponding to said requests)
+    solvers are assigned to one or more subeconomies and handle requests (and corresponding donations) pertaining to that subeconomy 
     '''
-
     def __init__(self, id, solver_type, economies):
         self.id = id
         self.requests = []
@@ -146,6 +150,7 @@ class Solver:
     def add_requests(self, requests):
         '''
         add request(s) to given solver
+        TODO integrate
         '''
         for r_id in requests:
             self.requests.append(r_id) 
@@ -153,16 +158,16 @@ class Solver:
     def remove_requests(self, requests):
         ''' 
         remove request(s) from given solver
+        TODO integrate
         '''
         for r_id in requests:
             self.requests.remove(r_id)
 
-# helper methods
+# helper methods for setting up the initial system state
 def init_agents(econs, num_agents, probabilities):
     ''' 
-    initialize agents by assigning them to sub-economies and setting their type
+    initialize agents; assigns agents to subeconomies, sets their type
     '''
-
     agents = {}
 
     for i in range(num_agents):
@@ -182,7 +187,7 @@ def init_agents(econs, num_agents, probabilities):
 
 def init_solvers(econs, num_solvers, probabilities):
     '''
-    initialize solvers by assigning them to sub-economies and setting their type
+    initialize solvers; assigns solvers to subeconomies, sets their type
     '''
 
     solvers = {}
@@ -193,7 +198,7 @@ def init_solvers(econs, num_solvers, probabilities):
         id = "solver_" + str(i)
         econ_count = random.randint(1, len(econs))
         economies = random.sample(econs, econ_count)
-        is_global = random.choices([0, 1], probabilities)[0] # select if global
+        is_global = random.choices([0, 1], probabilities)[0] # select if also global
         
         if is_global:
             economies.append("global")
@@ -210,8 +215,9 @@ def init_solvers(econs, num_solvers, probabilities):
 
 def init_resources(resources1, resources2, probabilities):
     '''
-    initialize resources 
-    first initialize complex resources then dependencies
+    initialize resources in two steps:
+    1. complex resources
+    2. dependencies
     '''
 
     resources = {}
@@ -288,8 +294,8 @@ def calculate_cumulative_idling_capacity(inv, agents):
 
 def calculate_concentration_index(resource_id, net):
     '''
-    compute the concentration index of a resource
-    metric is invariant to idle system stock
+    the concentration index measures the distribution of a resource among owners
+    computed as the complement of the difference between the highest and lowest owned percentages
     '''
     
     stock_per_agent = []
@@ -297,46 +303,47 @@ def calculate_concentration_index(resource_id, net):
 
     for agent_id, agent in net.items():
         if resource_id in agent.inventory.stock.keys():
-            stock_per_agent.append(agent.inventory.stock[resource_id]["quantity"])
+            if agent.inventory.stock[resource_id]["quantity"] != 0 or agent.inventory.stock[resource_id]["locked"] != 0 or agent.inventory.stock[resource_id]["idle_stock"] != 0:
+                stock_per_agent.append(agent.inventory.stock[resource_id]["quantity"] + agent.inventory.stock[resource_id]["idle_stock"] + agent.inventory.stock[resource_id]["locked"])
 
     total_stock = sum(stock_per_agent)
     
     if total_stock == 0:
-        return 0.0
+        return 0.0, 0.0, 0.0
     
     for s in stock_per_agent:
         fraction_per_agent.append(s / total_stock)
-
-    # #normalized = preprocessing.normalize([fraction_per_agent])[0]
     
     concentration_index = 1.0 - (max(fraction_per_agent) - min(fraction_per_agent))
 
     return round(concentration_index, 2), min(fraction_per_agent), max(fraction_per_agent)
 
+
 def calculate_distribution_index(resource_id, net, num_agents):
     '''
-    compute the distribution index of a resource
+    the distribution index measures the spread of a resource in terms of owners count (as percentage of total agent count)
     '''
-
+    
     holders = 0 
 
     for agent_id, agent in net.items():
         if resource_id in agent.inventory.stock.keys():
-            holders += 1
+            if agent.inventory.stock[resource_id]["quantity"] != 0 or agent.inventory.stock[resource_id]["locked"] != 0 or agent.inventory.stock[resource_id]["idle_stock"] != 0:
+                holders += 1
 
     return round(holders / num_agents, 2)
 
 
 def calculate_decentralization_index(di, ci):
     '''
-    compute the decentralization index of a resource based on its distribution and concentration indices
+    the decentralization index combines the concentration and distribution index into a single metric
     '''
     return round((di + ci) / 2, 2)
 
 
 def distribute_inventory(agents, min_count, max_count, inventory):
     '''
-    distribute global inventory to agents before simulation begins
+    distribute global inventory to agents at system start
     '''
 
     for agent_id, agent in agents.items(): # for each agent
