@@ -3,3 +3,13 @@
 # environment
 .env
 venvs/
+
+
+# artifacts
+artifacts
+
+# results
+/notebook/results
+
+# notebooks
+/notebook/analysis.ipynb

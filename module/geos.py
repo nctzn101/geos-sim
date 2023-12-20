@@ -307,11 +307,11 @@ def calculate_concentration_index(resource_id, net):
     for s in stock_per_agent:
         fraction_per_agent.append(s / total_stock)
 
-    normalized = preprocessing.normalize([fraction_per_agent])[0]
+    # #normalized = preprocessing.normalize([fraction_per_agent])[0]
     
-    concentration_index = 1.0 - (max(normalized) - min(normalized))
+    concentration_index = 1.0 - (max(fraction_per_agent) - min(fraction_per_agent))
 
-    return round(concentration_index, 2)
+    return round(concentration_index, 2), min(fraction_per_agent), max(fraction_per_agent)
 
 def calculate_distribution_index(resource_id, net, num_agents):
     '''
