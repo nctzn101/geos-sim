@@ -13,3 +13,7 @@ artifacts
 
 # notebooks
 /notebook/analysis.ipynb
+
+# cache
+module/__pycache__/
+
